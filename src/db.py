@@ -1,22 +1,22 @@
+# db.py
 import os
 import asyncpg
 from contextlib import asynccontextmanager
+from dotenv import load_dotenv
 
-# Global connection pool reference
 _pool: asyncpg.Pool | None = None
 
+# Load .env variables into this process
+load_dotenv()
+
 async def init_pool():
-    """Initializes the asyncpg connection pool."""
     global _pool
     dsn = os.environ.get("DB_DSN")
     if not dsn:
         raise ValueError("DB_DSN environment variable is not set.")
-    
-    # Establish connection pool targeting 10.218.248.21
-    _pool = await asyncpg.create_pool(dsn)
+    _pool = await asyncpg.create_pool(dsn, min_size=2, max_size=10)
 
 async def close_pool():
-    """Closes the asyncpg connection pool gracefully."""
     global _pool
     if _pool:
         await _pool.close()
@@ -24,9 +24,7 @@ async def close_pool():
 
 @asynccontextmanager
 async def get_connection():
-    """Context manager for safely acquiring and releasing database connections."""
     if _pool is None:
         raise RuntimeError("Database pool has not been initialized.")
-    
     async with _pool.acquire() as conn:
         yield conn
