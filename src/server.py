@@ -23,34 +23,33 @@ async def server_lifespan(server: FastMCP):
 mcp = FastMCP("hermes-ems", lifespan=server_lifespan)
 
 @mcp.tool
-async def get_database_schema() -> str:
-    """
-    Returns the complete database schema including all table names and their column definitions.
-    Call this tool first if you need to know the database structure.
-    """
-    query = """
-    SELECT 
-        table_name, 
-        column_name, 
-        data_type 
-    FROM information_schema.columns 
-    WHERE table_schema = 'public'
-    ORDER BY table_name, ordinal_position;
-    """
-    async with get_connection() as conn:
-        rows = await conn.fetch(query)
-        return json.dumps([dict(row) for row in rows], default=str)
-
-
-@mcp.tool
 async def run_readonly_query(sql_query: str) -> str:
     """
-    Executes a read-only SQL query (SELECT) against the database and returns the rows as JSON.
-    Use this for querying employees, tasks, or event histories.
+    Executes a read-only SELECT query against the PostgreSQL database.
+    
+    EXACT TABLES AND COLUMNS:
+    - departments (id, name)
+    - roles (id, name)
+    - employees (id, name, department_id, role_id)
+    - tasks (id, title, description, assignee_id, status, created_at)
+    - task_events (id, task_id, employee_id, new_status, note, occurred_at)
+    
+    CRITICAL RULES:
+    - All table names are PLURAL: employees, tasks, departments (NOT employee, task, department).
+    - Link tasks to employees with: tasks.assignee_id = employees.id (NOT employee_id).
+    - Task name is stored in: tasks.title (NOT task.name).
+    - Employee name is stored in: employees.name.
     """
     sanitized = sql_query.strip().lower()
     if not (sanitized.startswith("select") or sanitized.startswith("with")):
         return json.dumps({"error": "Only read-only SELECT queries are permitted."})
+
+    try:
+        async with get_connection() as conn:
+            rows = await conn.fetch(sql_query)
+            return json.dumps([dict(row) for row in rows], default=str)
+    except Exception as e:
+        return json.dumps({"error": f"SQL execution failed: {str(e)}. Please correct table and column names and retry."})
 
     try:
         async with get_connection() as conn:
@@ -106,4 +105,4 @@ async def search_notes(keyword: str) -> str:
 
 
 if __name__ == "__main__":
-    mcp.run()
+    mcp.run(transport="stdio")
