@@ -13,6 +13,8 @@ EMPLOYEE_LOCKS: Dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 # Global FastMCP client to prevent subprocess thrashing on every message
 mcp_client: Optional[Client] = None
 
+# Maximum number of iterations to prevent infinite loops in tool calls
+MAX_TOOL_CALL_ITERATIONS = 10
 
 SYSTEM_PROMPT = """You are an autonomous PostgreSQL assistant for an Employee Management System.
 Current Employee Operator: {name} (ID: {employee_id}, Role: {role}, Dept: {department}).
@@ -56,7 +58,15 @@ async def process_user_turn(employee: Dict[str, Any], user_input: str) -> str:
         } for tool in tools
     ]
 
+    iteration = 0
     while True:
+        if iteration >= MAX_TOOL_CALL_ITERATIONS:
+            fallback = "I was unable to complete the request within the allowed tool call limit. Please try rephrasing or narrowing your query."
+            await db.log_message(thread_id, emp_id, role="assistant", content=fallback)
+            return fallback
+
+        iteration += 1
+
         response = await llm_client.chat.completions.create(
             model=MODEL_NAME,
             messages=history,
