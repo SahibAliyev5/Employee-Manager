@@ -29,6 +29,47 @@ async def close_mcp():
     if mcp_client:
         await mcp_client.__aexit__(None, None, None)
 
+
+def sanitize_history(raw_messages: list) -> list:
+    """
+    Cleans message history to strictly conform to role alternation rules.
+    """
+    cleaned = []
+    
+    for msg in raw_messages:
+        role = msg.get("role")
+        
+        # 1. Ensure the sequence begins with a user message.
+        # Drop leading assistant/tool messages caused by database pagination slicing.
+        if not cleaned and role != "user":
+            continue
+            
+        # 2. Drop orphaned tool messages (tool responses without a preceding tool_call)
+        if role == "tool":
+            if not cleaned or cleaned[-1].get("role") != "assistant" or not cleaned[-1].get("tool_calls"):
+                continue
+                
+        # 3. Handle unanswered tool calls (if an assistant made a call but a user replied instead)
+        if role in ["user", "assistant"] and cleaned and cleaned[-1].get("role") == "assistant" and cleaned[-1].get("tool_calls"):
+            cleaned.pop()
+        
+        # 4. Merge consecutive messages of the same role
+        if role == "user" and cleaned and cleaned[-1].get("role") == "user":
+            cleaned[-1]["content"] = f"{cleaned[-1].get('content', '')}\n{msg.get('content', '')}"
+            continue
+            
+        if role == "assistant" and cleaned and cleaned[-1].get("role") == "assistant":
+            cleaned[-1]["content"] = f"{cleaned[-1].get('content', '')}\n{msg.get('content', '')}"
+            continue
+
+        cleaned.append(msg)
+        
+    # 5. Remove any trailing tool call that was never answered
+    if cleaned and cleaned[-1].get("role") == "assistant" and cleaned[-1].get("tool_calls"):
+        cleaned.pop()
+        
+    return cleaned
+
 async def process_user_turn(employee: Dict[str, Any], user_input: str) -> str:
     emp_id = employee["employee_id"]
     thread_id = await db.get_or_create_thread(emp_id)
@@ -44,7 +85,10 @@ async def process_user_turn(employee: Dict[str, Any], user_input: str) -> str:
             department=employee.get("department") or "General"
         )
     }
-    history = [formatted_sys_prompt] + await db.fetch_recent_messages(thread_id, limit=12)
+    recent_db_messages = await db.fetch_recent_messages(thread_id, limit=40)
+    sanitized_history = sanitize_history(recent_db_messages)
+    
+    history = [formatted_sys_prompt] + sanitized_history
 
     tools = await mcp_client.list_tools()
     openai_tools = [

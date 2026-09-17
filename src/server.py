@@ -1,14 +1,14 @@
 # ems_server.py
-import json
 from contextlib import asynccontextmanager
 from fastmcp import FastMCP
-
 import sys
 from pathlib import Path
+
 # Ensure the directory containing this script (src/) is in sys.path
 sys.path.insert(0, str(Path(__file__).parent.resolve()))
 
-from db import init_pool, close_pool, get_connection
+from db import init_pool, close_pool
+from tools import register_tools
 
 @asynccontextmanager
 async def server_lifespan(server: FastMCP):
@@ -19,90 +19,10 @@ async def server_lifespan(server: FastMCP):
     finally:
         await close_pool()
 
-
 mcp = FastMCP("hermes-ems", lifespan=server_lifespan)
 
-@mcp.tool
-async def run_readonly_query(sql_query: str) -> str:
-    """
-    Executes a read-only SELECT query against the PostgreSQL database.
-    
-    EXACT TABLES AND COLUMNS:
-    - departments (id, name)
-    - roles (id, name)
-    - employees (id, name, department_id, role_id)
-    - tasks (id, title, description, assignee_id, status, created_at)
-    - task_events (id, task_id, employee_id, new_status, note, occurred_at)
-    
-    CRITICAL RULES:
-    - All table names are PLURAL: employees, tasks, departments (NOT employee, task, department).
-    - Link tasks to employees with: tasks.assignee_id = employees.id (NOT employee_id).
-    - Task name is stored in: tasks.title (NOT task.name).
-    - Employee name is stored in: employees.name.
-    """
-    sanitized = sql_query.strip().lower()
-    if not (sanitized.startswith("select") or sanitized.startswith("with")):
-        return json.dumps({"error": "Only read-only SELECT queries are permitted."})
-
-    try:
-        async with get_connection() as conn:
-            rows = await conn.fetch(sql_query)
-            return json.dumps([dict(row) for row in rows], default=str)
-    except Exception as e:
-        return json.dumps({"error": f"SQL execution failed: {str(e)}. Please correct table and column names and retry."})
-
-    try:
-        async with get_connection() as conn:
-            rows = await conn.fetch(sql_query)
-            return json.dumps([dict(row) for row in rows], default=str)
-    except Exception as e:
-        return json.dumps({"error": str(e)})
-
-
-@mcp.tool
-async def log_task_event(
-    task_id: int, 
-    employee_id: int, 
-    new_status: str, 
-    note: str, 
-    old_status: str = None
-) -> str:
-    """
-    Logs an event/status update for a given task into the task_events table.
-    Allowed statuses: 'open', 'in_progress', 'blocked', 'review', 'completed'.
-    """
-    query = """
-    INSERT INTO task_events (task_id, employee_id, old_status, new_status, note)
-    VALUES ($1, $2, $3, $4, $5)
-    RETURNING id, occurred_at;
-    """
-    try:
-        async with get_connection() as conn:
-            row = await conn.fetchrow(query, task_id, employee_id, old_status, new_status, note)
-            return json.dumps({"success": True, "event": dict(row)}, default=str)
-    except Exception as e:
-        return json.dumps({"error": str(e)})
-
-
-@mcp.tool
-async def search_notes(keyword: str) -> str:
-    """
-    Performs keyword search on task notes and event logs.
-    """
-    query = """
-    SELECT task_id, employee_id, new_status, note, occurred_at
-    FROM task_events
-    WHERE note ILIKE $1
-    ORDER BY occurred_at DESC
-    LIMIT 20;
-    """
-    try:
-        async with get_connection() as conn:
-            rows = await conn.fetch(query, f"%{keyword}%")
-            return json.dumps([dict(row) for row in rows], default=str)
-    except Exception as e:
-        return json.dumps({"error": str(e)})
-
+# Register all extracted tools
+register_tools(mcp)
 
 if __name__ == "__main__":
     mcp.run(transport="stdio")
