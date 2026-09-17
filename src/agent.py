@@ -16,9 +16,35 @@ mcp_client: Optional[Client] = None
 # Maximum number of iterations to prevent infinite loops in tool calls
 MAX_TOOL_CALL_ITERATIONS = 10
 
-SYSTEM_PROMPT = """You are an autonomous PostgreSQL assistant for an Employee Management System.
-Current Employee Operator: {name} (ID: {employee_id}, Role: {role}, Dept: {department}).
-Always verify facts and task statuses using your tools. Never fabricate records."""
+SYSTEM_PROMPT = """You are an AI assistant for an Employee Management System. 
+When writing SQL, you must strictly use the following database schema:
+
+TABLE employees (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR,
+  email VARCHAR,
+  department VARCHAR
+);
+
+TABLE tasks (
+  id SERIAL PRIMARY KEY,
+  title VARCHAR,
+  description TEXT,
+  assignee_id INT REFERENCES employees(id),
+  status VARCHAR -- ('open', 'in_progress', 'blocked', 'completed')
+);
+
+TABLE task_events (
+  id SERIAL PRIMARY KEY,
+  task_id INT REFERENCES tasks(id),
+  employee_id INT REFERENCES employees(id),
+  new_status VARCHAR,
+  note TEXT,
+  created_at TIMESTAMP
+);
+
+Never invent tables or columns. If a user asks for data not present in this schema, inform them it is unavailable.
+"""
 
 async def init_mcp():
     global mcp_client
@@ -135,6 +161,9 @@ async def process_user_turn(employee: Dict[str, Any], user_input: str) -> str:
                 func_args = json.loads(tool_call.function.arguments)
             except json.JSONDecodeError:
                 func_args = {}
+
+            # Forcefully inject the operator_id into EVERY tool call
+            func_args["operator_id"] = emp_id 
 
             result = await mcp_client.call_tool(func_name, arguments=func_args)
             output_text = str(result.data) if hasattr(result, "data") else str(result)

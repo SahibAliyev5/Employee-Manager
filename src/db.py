@@ -26,16 +26,12 @@ async def get_connection():
         yield conn
 
 async def get_authorized_employee(telegram_id: int) -> Optional[Dict[str, Any]]:
-    """Resolves Telegram ID to the core employee matrix."""
+    """Resolves Telegram ID to the core employee matrix, bypassing RLS safely."""
     async with _pool.acquire() as conn:
-        row = await conn.fetchrow("""
-            SELECT u.employee_id, e.name, d.name as department, r.name as role
-            FROM authorized_users u
-            JOIN employees e ON u.employee_id = e.id
-            JOIN departments d ON e.department_id = d.id
-            JOIN roles r ON e.role_id = r.id
-            WHERE u.telegram_id = $1
-        """, telegram_id)
+        row = await conn.fetchrow(
+            "SELECT * FROM get_authorized_employee_secure($1)", 
+            telegram_id
+        )
         return dict(row) if row else None
 
 async def get_or_create_thread(employee_id: int) -> uuid.UUID:

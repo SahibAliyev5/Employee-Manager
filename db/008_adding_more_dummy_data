@@ -1,0 +1,141 @@
+BEGIN;
+
+-- 1. Truncate operational and transactional tables while preserving 'authorized_users'
+TRUNCATE TABLE chat_messages CASCADE;
+TRUNCATE TABLE chat_threads CASCADE;
+TRUNCATE TABLE task_events CASCADE;
+TRUNCATE TABLE tasks CASCADE;
+TRUNCATE TABLE reporting_lines CASCADE;
+
+-- Delete employees except Sahib Aliyev (and cascade updates if needed)
+DELETE FROM employees WHERE name != 'Sahib Aliyev';
+
+-- Clean up unused lookups if desired, but keep departments/roles intact or re-seed safely
+INSERT INTO departments (id, name) VALUES 
+    (1, 'Management'),
+    (2, 'Engineering'),
+    (3, 'Product'),
+    (4, 'Data Science')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO roles (id, name) VALUES 
+    (1, 'Admin'),
+    (2, 'Engineering Director'),
+    (3, 'Senior Software Engineer'),
+    (4, 'Junior Software Engineer'),
+    (5, 'Product Manager'),
+    (6, 'Data Scientist')
+ON CONFLICT (id) DO NOTHING;
+
+-- Ensure Sahib Aliyev exists with correct Department and Role IDs (keeping his ID if possible, or mapping him)
+UPDATE employees 
+SET department_id = 1, role_id = 1 
+WHERE name = 'Sahib Aliyev';
+
+-- If Sahib Aliyev isn't already present in the employees table, insert him explicitly:
+INSERT INTO employees (id, name, department_id, role_id)
+SELECT 1, 'Sahib Aliyev', 1, 1
+WHERE NOT EXISTS (SELECT 1 FROM employees WHERE name = 'Sahib Aliyev');
+
+-- 2. Insert Synthetic Employees (Total 10 employees including Sahib Aliyev)
+INSERT INTO employees (id, name, department_id, role_id) VALUES
+    (2, 'Leyla Mammadova', 2, 2),
+    (3, 'Orkhan Hasanov', 2, 3),
+    (4, 'Aidan Aliyeva', 2, 4),
+    (5, 'Farid Guliyev', 3, 5),
+    (6, 'Nigar Karimova', 3, 5),
+    (7, 'Rashad Ismayilov', 2, 3),
+    (8, 'Gunel Huseynova', 4, 6),
+    (9, 'Tural Qasimov', 4, 6),
+    (10, 'Zahra Alizada', 2, 4)
+ON CONFLICT (id) DO UPDATE 
+SET name = EXCLUDED.name, department_id = EXCLUDED.department_id, role_id = EXCLUDED.role_id;
+
+-- 3. Reporting Lines Setup
+INSERT INTO reporting_lines (supervisor_id, subordinate_id) VALUES
+    (1, 2), -- Sahib supervises Leyla
+    (2, 3), -- Leyla supervises Orkhan & Aidan & Rashad
+    (2, 4),
+    (2, 7),
+    (1, 5), -- Sahib supervises Farid & Nigar
+    (1, 6),
+    (5, 8), -- Farid supervises Gunel & Tural
+    (5, 9),
+    (3, 10) -- Orkhan oversees Zahra
+ON CONFLICT (supervisor_id, subordinate_id) DO NOTHING;
+
+-- Reset employee sequence
+SELECT setval(pg_get_serial_sequence('employees', 'id'), (SELECT MAX(id) FROM employees));
+
+-- 4. Insert 15 Consistent Tasks
+INSERT INTO tasks (id, title, description, assignee_id, status, created_at) VALUES
+    (1, 'Migrate database to PostgreSQL 16', 'Upgrade instance and verify performance parameters.', 3, 'completed', NOW() - INTERVAL '14 days'),
+    (2, 'Implement JWT Authentication', 'Secure endpoints with rotating tokens.', 4, 'completed', NOW() - INTERVAL '12 days'),
+    (3, 'Design Event Sourcing Pipeline', 'Structure event storage tables and triggers.', 3, 'completed', NOW() - INTERVAL '10 days'),
+    (4, 'Build Real-time Analytics Dashboard', 'Create charts for active user metrics.', 6, 'in_progress', NOW() - INTERVAL '8 days'),
+    (5, 'Optimize Vector Search Query Indexing', 'Tune GIN indexes for low-latency text search.', 7, 'in_progress', NOW() - INTERVAL '7 days'),
+    (6, 'Implement Telegram Bot Webhook Handler', 'Receive and process incoming updates securely.', 4, 'review', NOW() - INTERVAL '6 days'),
+    (7, 'Set up Automated Docker Compose Stacks', 'Containerize services for staging environments.', 3, 'completed', NOW() - INTERVAL '5 days'),
+    (8, 'Draft Q4 Product Roadmap', 'Coordinate milestone deliverables with engineering leads.', 5, 'open', NOW() - INTERVAL '4 days'),
+    (9, 'Data Pipeline Anomaly Detection', 'Build isolation forest model for metric tracking logs.', 8, 'review', NOW() - INTERVAL '3 days'),
+    (10, 'Write Comprehensive API Documentation', 'Generate OpenAPI specs and Postman collections.', 10, 'open', NOW() - INTERVAL '3 days'),
+    (11, 'Configure Row Level Security Policies', 'Enforce user-isolation on sensitive schema tables.', 3, 'completed', NOW() - INTERVAL '2 days'),
+    (12, 'Memory Profiling on Python Workers', 'Investigate leak occurrences under heavy asyncio load.', 7, 'blocked', NOW() - INTERVAL '2 days'),
+    (13, 'Setup CI/CD Pipeline via GitHub Actions', 'Automate test runner scripts on pull requests.', 10, 'in_progress', NOW() - INTERVAL '1 day'),
+    (14, 'Customer Feedback Text Sentiment Analysis', 'Parse user reviews using custom fine-tuned NLP pipeline.', 9, 'open', NOW() - INTERVAL '1 day'),
+    (15, 'Security Audit and Vulnerability Scanning', 'Run dependency vulnerability checks across codebase.', 1, 'open', NOW() - INTERVAL '12 hours');
+
+-- 5. Insert 30 Consistent Task Events (2 events per task on average to reflect transitions)
+INSERT INTO task_events (task_id, employee_id, old_status, new_status, note, raw_message, occurred_at) VALUES
+    -- Task 1 Events
+    (1, 1, NULL, 'open', 'Task created by Admin.', 'Init task', NOW() - INTERVAL '14 days'),
+    (1, 3, 'open', 'completed', 'Migration completed successfully with zero downtime.', 'Done via pg_upgrade', NOW() - INTERVAL '13 days'),
+    -- Task 2 Events
+    (2, 2, NULL, 'open', 'Assigned to Aidan.', 'Create ticket', NOW() - INTERVAL '12 days'),
+    (2, 4, 'open', 'completed', 'JWT implemented and verified with tests.', 'PR merged', NOW() - INTERVAL '11 days'),
+    -- Task 3 Events
+    (3, 1, NULL, 'open', 'Requested event storage structure.', 'Create task', NOW() - INTERVAL '10 days'),
+    (3, 3, 'open', 'completed', 'Schema finalized and migrated.', 'Migration applied', NOW() - INTERVAL '9 days'),
+    -- Task 4 Events
+    (4, 5, NULL, 'open', 'Created analytics ticket.', 'Backlog item', NOW() - INTERVAL '8 days'),
+    (4, 6, 'open', 'in_progress', 'Started frontend dashboard bindings.', 'WIP commit', NOW() - INTERVAL '7 days'),
+    -- Task 5 Events
+    (5, 2, NULL, 'open', 'Indexing issue reported.', 'Create ticket', NOW() - INTERVAL '7 days'),
+    (5, 7, 'open', 'in_progress', 'Analyzing execution plans.', 'EXPLAIN ANALYZE run', NOW() - INTERVAL '6 days'),
+    -- Task 6 Events
+    (6, 2, NULL, 'open', 'Webhook integration task setup.', 'Init task', NOW() - INTERVAL '6 days'),
+    (6, 4, 'open', 'review', 'Submitted pull request for Telegram hooks.', 'PR #45 open', NOW() - INTERVAL '5 days'),
+    -- Task 7 Events
+    (7, 3, NULL, 'open', 'Docker infrastructure requested.', 'Create task', NOW() - INTERVAL '5 days'),
+    (7, 3, 'open', 'completed', 'Docker-compose files verified and pushed.', 'Commit pushed', NOW() - INTERVAL '4 days'),
+    -- Task 8 Events
+    (8, 1, NULL, 'open', 'Roadmap draft ticket created.', 'Init task', NOW() - INTERVAL '4 days'),
+    -- Task 9 Events
+    (9, 8, NULL, 'open', 'Model setup started.', 'Init task', NOW() - INTERVAL '3 days'),
+    (9, 8, 'open', 'review', 'Model training finished, code under review.', 'PR ready', NOW() - INTERVAL '2 days'),
+    -- Task 10 Events
+    (10, 6, NULL, 'open', 'Documentation ticket added.', 'Init task', NOW() - INTERVAL '3 days'),
+    -- Task 11 Events
+    (11, 1, NULL, 'open', 'RLS requirement requested.', 'Security policy task', NOW() - INTERVAL '2 days'),
+    (11, 3, 'open', 'completed', 'Policies applied and tested successfully.', 'Policies active', NOW() - INTERVAL '1 day 12 hours'),
+    -- Task 12 Events
+    (12, 7, NULL, 'open', 'Memory leak observed.', 'Bug report', NOW() - INTERVAL '2 days'),
+    (12, 7, 'in_progress', 'blocked', 'Blocked waiting on profiling tool access credentials.', 'Blocker flagged', NOW() - INTERVAL '1 day'),
+    -- Task 13 Events
+    (13, 2, NULL, 'open', 'CI pipeline task created.', 'Init task', NOW() - INTERVAL '1 day'),
+    (13, 10, 'open', 'in_progress', 'Writing YAML file for GitHub Actions.', 'WIP branch', NOW() - INTERVAL '18 hours'),
+    -- Task 14 Events
+    (14, 5, NULL, 'open', 'Sentiment analysis ticket created.', 'Backlog item', NOW() - INTERVAL '1 day'),
+    -- Task 15 Events
+    (15, 1, NULL, 'open', 'Scheduled audit ticket.', 'Init audit', NOW() - INTERVAL '12 hours'),
+    -- Extra 4 events to hit exactly 30 total task events
+    (4, 6, 'in_progress', 'in_progress', 'Refactored component hooks for better performance.', 'Optimization commit', NOW() - INTERVAL '4 days'),
+    (6, 2, 'review', 'review', 'Requested minor test coverage additions.', 'Review feedback', NOW() - INTERVAL '2 days'),
+    (10, 10, 'open', 'open', 'Initialized Swagger/OpenAPI doc scaffolds.', 'WIP docs', NOW() - INTERVAL '2 days'),
+    (8, 5, 'open', 'open', 'Gathering feedback inputs from engineering leads.', 'Drafting notes', NOW() - INTERVAL '1 day');
+
+-- Reset sequences for tasks and task_events
+SELECT setval(pg_get_serial_sequence('tasks', 'id'), (SELECT MAX(id) FROM tasks));
+SELECT setval(pg_get_serial_sequence('task_events', 'id'), (SELECT MAX(id) FROM task_events));
+
+COMMIT;
