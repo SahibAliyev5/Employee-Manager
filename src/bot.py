@@ -96,7 +96,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(reply)
         except Exception as e:
             logger.exception("Error processing turn for employee %s", emp_id)
-            await update.message.reply_text(f"⚠️ Execution Failure: {str(e)}")
+            # Only try to reply if it is NOT a Telegram network error
+            import telegram.error
+            if not isinstance(e, telegram.error.NetworkError):
+                try:
+                    await update.message.reply_text(f"⚠️ Execution Failure: {str(e)}")
+                except Exception:
+                    pass # Suppress secondary failures
         finally:
             pulse.cancel()
 

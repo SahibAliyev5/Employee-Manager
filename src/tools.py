@@ -1,5 +1,6 @@
 import json
 from fastmcp import FastMCP
+import mcp
 from db import get_connection
 
 # Define the recursive query once to use across all tools
@@ -60,8 +61,14 @@ def register_tools(mcp: FastMCP):
     ) -> str:
         """
         Logs an event/status update for a given task and updates the active task status.
-        operator_id: The ID of the employee executing the action.
+        
+        CRITICAL INSTRUCTIONS FOR AI:
+        - employee_id: Use the employee_id provided to you in your system prompt. DO NOT ask the user.
+        - operator_id: The system auto-injects this. Provide a dummy integer (e.g., 0) as it will be overwritten. DO NOT ask the user.
+        - task_id: If the user gives you a task title (e.g., "CI/CD Pipeline"), use run_readonly_query to find its ID. DO NOT ask the user for the ID.
+        - new_status & note: You MUST ask the user for these if they didn't provide them in their request.
         """
+        
         insert_event_query = """
         INSERT INTO task_events (task_id, employee_id, old_status, new_status, note)
         VALUES ($1, $2, $3, $4, $5)
@@ -81,16 +88,18 @@ def register_tools(mcp: FastMCP):
                     if not allowed_ids:
                         allowed_ids = [operator_id]
 
-                    # 2. Verify the task belongs to the operator or a subordinate
-                    task = await conn.fetchrow("SELECT assignee_id FROM tasks WHERE id = $1", task_id)
-                    if not task:
-                        return json.dumps({"error": "Task not found."})
+                    # 2. Inject allowed IDs into the Postgres transaction for RLS
+                    allowed_ids_str = ",".join(map(str, allowed_ids))
+                    await conn.execute("SELECT set_config('app.allowed_ids', $1, true);", allowed_ids_str)
+                    
+                    # 3. Execute the update (RLS will automatically block unauthorized access)
+                    update_result = await conn.execute(update_task_query, new_status, task_id)
+                    
+                    # asyncpg returns 'UPDATE 0' if no rows were matched or if RLS blocked the write
+                    if update_result == "UPDATE 0":
+                        return json.dumps({"error": "Task not found or permission denied."})
                         
-                    if task["assignee_id"] not in allowed_ids:
-                        return json.dumps({"error": "Permission denied: You do not have access to modify this task."})
-
-                    # 3. Execute the updates safely
-                    await conn.execute(update_task_query, new_status, task_id)
+                    # 4. Insert the event log
                     row = await conn.fetchrow(insert_event_query, task_id, employee_id, old_status, new_status, note)
                     return json.dumps({"success": True, "event": dict(row)}, default=str)
                     
@@ -104,27 +113,34 @@ def register_tools(mcp: FastMCP):
         Performs keyword search on task notes and event logs.
         operator_id: The ID of the employee executing the search.
         """
-        # Note the ANY($2::INT[]) clause which strictly filters the results
+        # The manual ANY($2::INT[]) filter is removed. 
+        # RLS will automatically restrict results to the allowed reporting line.
         query = """
         SELECT task_id, employee_id, new_status, note, occurred_at
         FROM task_events
         WHERE note ILIKE $1
-          AND employee_id = ANY($2::INT[])
         ORDER BY occurred_at DESC
         LIMIT 20;
         """
         
         try:
             async with get_connection() as conn:
-                # 1. Authorization Check: Fetch allowed IDs
-                allowed_rows = await conn.fetch(TREE_QUERY, operator_id)
-                allowed_ids = [row["id"] for row in allowed_rows]
-                if not allowed_ids:
-                    allowed_ids = [operator_id]
-                
-                # 2. Run the predefined query using the allowed_ids array
-                rows = await conn.fetch(query, f"%{keyword}%", allowed_ids)
-                return json.dumps([dict(row) for row in rows], default=str)
-                
+                # We must wrap this in a transaction so set_config(..., true) scopes correctly
+                async with conn.transaction():
+                    
+                    # 1. Authorization Check: Fetch allowed IDs
+                    allowed_rows = await conn.fetch(TREE_QUERY, operator_id)
+                    allowed_ids = [row["id"] for row in allowed_rows]
+                    if not allowed_ids:
+                        allowed_ids = [operator_id]
+                        
+                    # 2. Inject allowed IDs into the Postgres transaction for RLS
+                    allowed_ids_str = ",".join(map(str, allowed_ids))
+                    await conn.execute("SELECT set_config('app.allowed_ids', $1, true);", allowed_ids_str)
+                    
+                    # 3. Run the simplified query (RLS handles the data masking)
+                    rows = await conn.fetch(query, f"%{keyword}%")
+                    return json.dumps([dict(row) for row in rows], default=str)
+                    
         except Exception as e:
             return json.dumps({"error": str(e)})

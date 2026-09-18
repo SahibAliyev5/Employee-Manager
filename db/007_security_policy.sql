@@ -21,3 +21,27 @@ CREATE POLICY task_event_hierarchy ON task_events
     USING (
         employee_id = ANY(string_to_array(NULLIF(current_setting('app.allowed_ids', true), ''), ',')::INT[])
     );
+
+
+CREATE OR REPLACE FUNCTION get_authorized_employee_secure(p_telegram_id BIGINT)
+RETURNS TABLE (
+    employee_id INT,
+    name VARCHAR,
+    department VARCHAR,
+    role VARCHAR
+) 
+SECURITY DEFINER
+SET search_path = public
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    -- This executes bypassing RLS because of SECURITY DEFINER
+    RETURN QUERY
+    SELECT u.employee_id, e.name, d.name, r.name
+    FROM authorized_users u
+    JOIN employees e ON u.employee_id = e.id
+    JOIN departments d ON e.department_id = d.id
+    JOIN roles r ON e.role_id = r.id
+    WHERE u.telegram_id = p_telegram_id;
+END;
+$$;

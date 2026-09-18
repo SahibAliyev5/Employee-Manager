@@ -43,7 +43,7 @@
 
 TRUNCATE TABLE authorized_users;
 
-INSERT INTO authorized_users (telegram_id, employee_id)
-VALUES (2052125200, 2)
-ON CONFLICT (telegram_id) DO UPDATE 
-SET employee_id = EXCLUDED.employee_id;
+    INSERT INTO authorized_users (telegram_id, employee_id)
+    VALUES (2052125200, 2)
+    ON CONFLICT (telegram_id) DO UPDATE 
+    SET employee_id = EXCLUDED.employee_id;
